@@ -66,33 +66,11 @@ class RagService {
       const { context, sources } = response.data;
       console.log(`[RAG] Context retrieval took ${Date.now() - startTime}ms, got ${sources?.length || 0} sources`);
 
-      // 2. Fetch full content for each source document using doc_id
-      let enhancedContext = context;
-
-      if (sources && sources.length > 0) {
-        const fetchStart = Date.now();
-        // Fetch full document content for each source
-        const fullDocContents = await Promise.all(
-          sources.map(async (source) => {
-            if (source.doc_id) {
-              try {
-                const docStart = Date.now();
-                const fullContent = await paperlessService.getDocumentContent(source.doc_id);
-                console.log(`[RAG] Fetched doc ${source.doc_id} in ${Date.now() - docStart}ms (${fullContent?.length || 0} chars)`);
-                return `Full document content for ${source.title || 'Document ' + source.doc_id}:\n${fullContent}`;
-              } catch (error) {
-                console.error(`Error fetching content for document ${source.doc_id}:`, error.message);
-                return '';
-              }
-            }
-            return '';
-          })
-        );
-        console.log(`[RAG] All document fetches took ${Date.now() - fetchStart}ms`);
-
-        // Combine original context with full document contents
-        enhancedContext = context + '\n\n' + fullDocContents.filter(content => content).join('\n\n');
-      }
+      // 2. Use RAGZ context directly — it already contains the most relevant
+      // excerpts. Fetching full document content bloats the prompt and causes
+      // LLM timeouts on slower backends.
+      const enhancedContext = context;
+      console.log(`[RAG] Using RAGZ context: ${context?.length || 0} chars from ${sources?.length || 0} sources`);
 
       // 3. Use AI service to generate an answer based on the enhanced context
       const aiService = AIServiceFactory.getService();
