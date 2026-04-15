@@ -121,10 +121,12 @@ class RagService {
     try {
       const { prompt, sources } = await this._buildRagPrompt(question);
 
-      // Set SSE headers
+      // Set SSE headers — X-Accel-Buffering disables proxy buffering (nginx/traefik)
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
 
       // Send sources as the first event so the frontend can display them immediately
       res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
@@ -162,12 +164,29 @@ class RagService {
         stream: true,
       });
 
+      let tokenCount = 0;
+      let inThinkBlock = false;
       for await (const chunk of stream) {
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
-          res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
+          // Filter out qwen3 <think> reasoning blocks
+          let filtered = content;
+          if (filtered.includes('<think>')) { inThinkBlock = true; }
+          if (inThinkBlock) {
+            if (filtered.includes('</think>')) {
+              inThinkBlock = false;
+              filtered = filtered.split('</think>').pop();
+            } else {
+              filtered = '';
+            }
+          }
+          if (filtered) {
+            tokenCount++;
+            res.write(`data: ${JSON.stringify({ type: 'content', content: filtered })}\n\n`);
+          }
         }
       }
+      console.log(`[RAG] Streamed ${tokenCount} content tokens`);
 
       console.log(`[RAG] Streaming LLM completed in ${Date.now() - llmStart}ms`);
       res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
