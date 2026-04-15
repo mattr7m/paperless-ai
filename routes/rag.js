@@ -28,21 +28,41 @@ router.post('/search', async (req, res) => {
 });
 
 /**
- * Ask a question about documents
+ * Ask a question about documents (non-streaming, kept for compatibility)
  */
 router.post('/ask', async (req, res) => {
   try {
     const { question } = req.body;
-    
+
     if (!question) {
       return res.status(400).json({ error: 'Question is required' });
     }
-    
+
     const result = await ragService.askQuestion(question);
     res.json(result);
   } catch (error) {
     console.error('Error in /api/rag/ask:', error);
     res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+/**
+ * Ask a question about documents (streaming SSE)
+ */
+router.post('/ask/stream', async (req, res) => {
+  try {
+    const { question } = req.body;
+
+    if (!question) {
+      return res.status(400).json({ error: 'Question is required' });
+    }
+
+    await ragService.askQuestionStream(question, res);
+  } catch (error) {
+    console.error('Error in /api/rag/ask/stream:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message || 'Internal server error' });
+    }
   }
 });
 
