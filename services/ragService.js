@@ -156,6 +156,11 @@ class RagService {
       console.log(`[RAG] Starting streaming LLM call...`);
       const llmStart = Date.now();
 
+      // Send SSE heartbeat every 15s to prevent Traefik proxy timeout (default 30s)
+      const heartbeat = setInterval(() => {
+        res.write(`: heartbeat\n\n`);
+      }, 15000);
+
       const stream = await client.chat.completions.create({
         model,
         messages: [{ role: 'user', content: prompt }],
@@ -166,13 +171,17 @@ class RagService {
 
       let tokenCount = 0;
       let fullResponse = '';
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        if (content) {
-          tokenCount++;
-          fullResponse += content;
-          res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
+      try {
+        for await (const chunk of stream) {
+          const content = chunk.choices[0]?.delta?.content || '';
+          if (content) {
+            tokenCount++;
+            fullResponse += content;
+            res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
+          }
         }
+      } finally {
+        clearInterval(heartbeat);
       }
       // Strip <think>...</think> blocks from the final response and send as a
       // replacement event so the frontend shows the clean answer
