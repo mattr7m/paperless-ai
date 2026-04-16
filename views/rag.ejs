@@ -1120,11 +1120,18 @@
                                 } else if (data.type === 'content') {
                                     streamedText += data.content;
                                     // Update the live message with streamed text
-                                    let formatted = streamedText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>');
-                                    if (!formatted.startsWith('<p>')) formatted = '<p>' + formatted;
-                                    if (!formatted.endsWith('</p>')) formatted += '</p>';
-                                    markdownDiv.innerHTML = formatted;
+                                    // Strip any <think>...</think> blocks for display
+                                    let displayText = streamedText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+                                    // Also strip unclosed <think> block at the end (still thinking)
+                                    displayText = displayText.replace(/<think>[\s\S]*$/g, '').trim();
+                                    let formatted = displayText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>');
+                                    if (formatted && !formatted.startsWith('<p>')) formatted = '<p>' + formatted;
+                                    if (formatted && !formatted.endsWith('</p>')) formatted += '</p>';
+                                    markdownDiv.innerHTML = formatted || '<p style="color: var(--text-tertiary)"><i>Thinking...</i></p>';
                                     scrollToBottom();
+                                } else if (data.type === 'replace') {
+                                    // Server sent a cleaned version of the full response
+                                    streamedText = data.content;
                                 } else if (data.type === 'error') {
                                     throw new Error(data.message);
                                 }

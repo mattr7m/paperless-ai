@@ -165,28 +165,23 @@ class RagService {
       });
 
       let tokenCount = 0;
-      let inThinkBlock = false;
+      let fullResponse = '';
       for await (const chunk of stream) {
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
-          // Filter out qwen3 <think> reasoning blocks
-          let filtered = content;
-          if (filtered.includes('<think>')) { inThinkBlock = true; }
-          if (inThinkBlock) {
-            if (filtered.includes('</think>')) {
-              inThinkBlock = false;
-              filtered = filtered.split('</think>').pop();
-            } else {
-              filtered = '';
-            }
-          }
-          if (filtered) {
-            tokenCount++;
-            res.write(`data: ${JSON.stringify({ type: 'content', content: filtered })}\n\n`);
-          }
+          tokenCount++;
+          fullResponse += content;
+          res.write(`data: ${JSON.stringify({ type: 'content', content })}\n\n`);
         }
       }
-      console.log(`[RAG] Streamed ${tokenCount} content tokens`);
+      // Strip <think>...</think> blocks from the final response and send as a
+      // replacement event so the frontend shows the clean answer
+      const cleaned = fullResponse.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      if (cleaned !== fullResponse.trim()) {
+        console.log(`[RAG] Stripped think blocks, clean response: ${cleaned.length} chars`);
+        res.write(`data: ${JSON.stringify({ type: 'replace', content: cleaned })}\n\n`);
+      }
+      console.log(`[RAG] Streamed ${tokenCount} tokens, response: ${fullResponse.length} chars`);
 
       console.log(`[RAG] Streaming LLM completed in ${Date.now() - llmStart}ms`);
       res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
