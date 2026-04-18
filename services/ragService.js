@@ -96,11 +96,14 @@ class RagService {
       max_tokens: 4096,
     });
 
-    let answer = completion.choices[0]?.message?.content || '';
-    // Strip <think> blocks
-    answer = answer.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    let rawAnswer = completion.choices[0]?.message?.content || '';
+    let answer = rawAnswer.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
-    console.log(`[RAG] Async job ${job.id}: LLM completed in ${Date.now() - llmStart}ms, ${answer.length} chars`);
+    console.log(`[RAG] Async job ${job.id}: LLM completed in ${Date.now() - llmStart}ms, raw=${rawAnswer.length} chars, clean=${answer.length} chars`);
+    if (rawAnswer.length !== answer.length) {
+      console.log(`[RAG] Async job ${job.id}: think block was ${rawAnswer.length - answer.length} chars`);
+    }
+    console.log(`[RAG] Async job ${job.id}: answer: ${answer.substring(0, 200)}`);
     job.answer = answer;
     job.status = 'complete';
     job.completedAt = Date.now();
