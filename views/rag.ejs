@@ -1059,131 +1059,61 @@
             const toDate = dateTo.value;
             const correspondentValue = correspondent.value.trim();
             
-            // Use streaming endpoint for real-time token display
-            const endpoint = '/api/rag/ask/stream';
-
-            // Create the assistant message element early so we can stream into it
-            const messageElement = document.createElement('div');
-            messageElement.className = 'message assistant';
-            const markdownDiv = document.createElement('div');
-            markdownDiv.className = 'markdown';
-            messageElement.appendChild(markdownDiv);
-            chatContainer.appendChild(messageElement);
-
-            let streamedText = '';
-            let streamSources = [];
-
-            // Debug: track stream events
-            let debugChunks = 0;
-            let debugEvents = { sources: 0, content: 0, replace: 0, done: 0, heartbeat: 0, other: 0 };
+            // Use async job endpoint — submit question, poll for result
             const debugEl = document.getElementById('stream-debug');
             debugEl.classList.remove('hidden');
-            debugEl.textContent = 'SSE: connecting...';
-            function updateDebug(extra) {
-                debugEl.textContent = `SSE: chunks=${debugChunks} src=${debugEvents.sources} tok=${debugEvents.content} hb=${debugEvents.heartbeat} repl=${debugEvents.replace} done=${debugEvents.done} txt=${streamedText.length}ch${extra ? ' | ' + extra : ''}`;
-            }
+            debugEl.textContent = 'Submitting question...';
 
-            fetch(endpoint, {
+            fetch('/api/rag/ask/async', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    question: questionText,
-                    useAI: useAI,
-                    from_date: fromDate || undefined,
-                    to_date: toDate || undefined,
-                    correspondent: correspondentValue || undefined
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question: questionText })
             })
             .then(response => {
-                if (!response.ok) {
-                    throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
-                }
+                if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+                return response.json();
+            })
+            .then(({ jobId }) => {
+                debugEl.textContent = `Job ${jobId.substring(0,8)}... polling`;
+                let polls = 0;
 
-                console.log('[SSE] Response received, status:', response.status);
-                updateDebug('response ok');
-                typingIndicator.classList.add('hidden');
+                function pollJob() {
+                    polls++;
+                    fetch(`/api/rag/ask/status/${jobId}`)
+                    .then(r => r.json())
+                    .then(job => {
+                        const elapsed = Math.round(job.elapsed / 1000);
+                        debugEl.textContent = `Job: ${job.status} | ${elapsed}s | polls=${polls}`;
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-
-                function processStream() {
-                    return reader.read().then(({ done, value }) => {
-                        if (done) {
-                            console.log('[SSE] Stream done. Chunks:', debugChunks, 'Events:', JSON.stringify(debugEvents), 'Text length:', streamedText.length);
-                            updateDebug('DONE');
-                            // Stream complete — finalize the message with sources
-                            messageElement.remove();
-                            addAssistantMessage(streamedText, streamSources);
+                        if (job.status === 'complete') {
+                            typingIndicator.classList.add('hidden');
+                            addAssistantMessage(job.answer, job.sources);
                             isConnected = true;
                             updateStatusIndicator('online', 'Online');
-                            return;
+                            debugEl.textContent += ' | DONE';
+                        } else if (job.status === 'error') {
+                            typingIndicator.classList.add('hidden');
+                            showError(`Error: ${job.error}`);
+                            debugEl.textContent += ' | ERROR: ' + job.error;
+                        } else {
+                            // Still processing — poll again in 3 seconds
+                            setTimeout(pollJob, 3000);
                         }
-
-                        debugChunks++;
-                        const rawText = decoder.decode(value, { stream: true });
-                        if (debugChunks <= 3) console.log('[SSE] Chunk', debugChunks, ':', rawText.substring(0, 200));
-                        buffer += rawText;
-                        updateDebug();
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop(); // keep incomplete line in buffer
-
-                        for (const line of lines) {
-                            // Skip empty lines and SSE comments
-                            if (line.startsWith(':')) continue;
-                            if (!line.startsWith('data: ')) continue;
-                            try {
-                                const data = JSON.parse(line.slice(6));
-                                if (data.type === 'sources') {
-                                    debugEvents.sources++;
-                                    streamSources = data.sources || [];
-                                } else if (data.type === 'content') {
-                                    debugEvents.content++;
-                                    streamedText += data.content;
-                                    // Update the live message with streamed text
-                                    // Strip any <think>...</think> blocks for display
-                                    let displayText = streamedText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-                                    // Also strip unclosed <think> block at the end (still thinking)
-                                    displayText = displayText.replace(/<think>[\s\S]*$/g, '').trim();
-                                    let formatted = displayText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>');
-                                    if (formatted && !formatted.startsWith('<p>')) formatted = '<p>' + formatted;
-                                    if (formatted && !formatted.endsWith('</p>')) formatted += '</p>';
-                                    markdownDiv.innerHTML = formatted || '<p style="color: var(--text-tertiary)"><i>Thinking...</i></p>';
-                                    scrollToBottom();
-                                } else if (data.type === 'replace') {
-                                    debugEvents.replace++;
-                                    // Server sent a cleaned version of the full response
-                                    streamedText = data.content;
-                                } else if (data.type === 'heartbeat') {
-                                    debugEvents.heartbeat++;
-                                    updateDebug();
-                                } else if (data.type === 'done') {
-                                    debugEvents.done++;
-                                } else if (data.type === 'error') {
-                                    throw new Error(data.message);
-                                } else {
-                                    debugEvents.other++;
-                                }
-                            } catch (e) {
-                                if (e.message && !e.message.includes('JSON')) throw e;
-                            }
-                        }
-
-                        return processStream();
+                    })
+                    .catch(err => {
+                        typingIndicator.classList.add('hidden');
+                        showError(`Poll error: ${err.message}`);
+                        debugEl.textContent = 'Poll error: ' + err.message;
                     });
                 }
 
-                return processStream();
+                // Start polling after a short delay
+                setTimeout(pollJob, 2000);
             })
             .catch(error => {
-                console.log('[SSE] Error:', error.message, 'Chunks:', debugChunks, 'Events:', JSON.stringify(debugEvents));
-                updateDebug('ERROR: ' + error.message);
-                // Clean up streamed element if it has no content
-                if (!streamedText) messageElement.remove();
                 typingIndicator.classList.add('hidden');
                 showError(`Error: ${error.message}`);
+                debugEl.textContent = 'ERROR: ' + error.message;
                 isConnected = false;
                 updateStatusIndicator('offline', 'Offline');
                 updateStatusBadgesOffline();

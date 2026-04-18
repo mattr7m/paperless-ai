@@ -1,4 +1,5 @@
 // services/ragService.js
+const crypto = require('crypto');
 const axios = require('axios');
 const OpenAI = require('openai');
 const config = require('../config/config');
@@ -8,6 +9,108 @@ const paperlessService = require('./paperlessService');
 class RagService {
   constructor() {
     this.baseUrl = process.env.RAG_SERVICE_URL || 'http://localhost:8000';
+    // In-memory job store for async RAG queries
+    this.jobs = new Map();
+    // Clean up completed jobs older than 10 minutes
+    setInterval(() => this._cleanupJobs(), 60000);
+  }
+
+  _cleanupJobs() {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    for (const [id, job] of this.jobs) {
+      if (job.completedAt && job.completedAt < cutoff) {
+        this.jobs.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Create an OpenAI client based on the configured AI provider.
+   */
+  _createLLMClient() {
+    let client, model;
+    if (config.aiProvider === 'custom') {
+      client = new OpenAI({ baseURL: config.custom.apiUrl, apiKey: config.custom.apiKey });
+      model = config.custom.model;
+    } else if (config.aiProvider === 'openai') {
+      client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      model = process.env.OPENAI_MODEL || 'gpt-4';
+    } else if (config.aiProvider === 'ollama') {
+      client = new OpenAI({ baseURL: `${process.env.OLLAMA_API_URL}/v1`, apiKey: 'ollama' });
+      model = process.env.OLLAMA_MODEL;
+    } else if (config.aiProvider === 'azure') {
+      client = new OpenAI({
+        apiKey: process.env.AZURE_API_KEY,
+        baseURL: `${process.env.AZURE_ENDPOINT}/openai/deployments/${process.env.AZURE_DEPLOYMENT_NAME}`,
+        defaultQuery: { 'api-version': process.env.AZURE_API_VERSION },
+      });
+      model = process.env.AZURE_DEPLOYMENT_NAME;
+    } else {
+      throw new Error('AI Provider not configured');
+    }
+    return { client, model };
+  }
+
+  /**
+   * Start an async RAG job. Returns the job ID immediately.
+   * The LLM call runs in the background.
+   */
+  async startAsyncJob(question) {
+    const jobId = crypto.randomUUID();
+    const job = {
+      id: jobId,
+      question,
+      status: 'building_prompt',
+      sources: [],
+      answer: null,
+      error: null,
+      createdAt: Date.now(),
+      completedAt: null,
+    };
+    this.jobs.set(jobId, job);
+
+    // Run the LLM call in the background (don't await)
+    this._runAsyncJob(job).catch(err => {
+      console.error(`[RAG] Async job ${jobId} failed:`, err.message);
+      job.status = 'error';
+      job.error = err.message;
+      job.completedAt = Date.now();
+    });
+
+    return jobId;
+  }
+
+  async _runAsyncJob(job) {
+    const { prompt, sources } = await this._buildRagPrompt(job.question);
+    job.sources = sources;
+    job.status = 'waiting_for_llm';
+
+    const { client, model } = this._createLLMClient();
+    console.log(`[RAG] Async job ${job.id}: starting LLM call (${prompt.length} chars)...`);
+    const llmStart = Date.now();
+
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+      max_tokens: 4096,
+    });
+
+    let answer = completion.choices[0]?.message?.content || '';
+    // Strip <think> blocks
+    answer = answer.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+    console.log(`[RAG] Async job ${job.id}: LLM completed in ${Date.now() - llmStart}ms, ${answer.length} chars`);
+    job.answer = answer;
+    job.status = 'complete';
+    job.completedAt = Date.now();
+  }
+
+  /**
+   * Get the status/result of an async job.
+   */
+  getJob(jobId) {
+    return this.jobs.get(jobId) || null;
   }
 
   /**
