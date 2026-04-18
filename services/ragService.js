@@ -128,6 +128,9 @@ class RagService {
       res.setHeader('X-Accel-Buffering', 'no');
       res.flushHeaders();
 
+      // Disable Nagle's algorithm so small writes flush immediately to the socket
+      if (res.socket) res.socket.setNoDelay(true);
+
       // Send sources as the first event so the frontend can display them immediately
       res.write(`data: ${JSON.stringify({ type: 'sources', sources })}\n\n`);
 
@@ -156,10 +159,13 @@ class RagService {
       console.log(`[RAG] Starting streaming LLM call...`);
       const llmStart = Date.now();
 
-      // Send SSE heartbeat every 15s to prevent Traefik proxy timeout (default 30s)
+      // Send SSE heartbeat every 10s to keep connection alive through proxies
+      let hbCount = 0;
       const heartbeat = setInterval(() => {
-        res.write(`: heartbeat\n\n`);
-      }, 15000);
+        hbCount++;
+        res.write(`data: ${JSON.stringify({ type: 'heartbeat' })}\n\n`);
+        console.log(`[RAG] Heartbeat #${hbCount} sent at ${Date.now() - llmStart}ms`);
+      }, 10000);
 
       const stream = await client.chat.completions.create({
         model,

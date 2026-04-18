@@ -1131,8 +1131,8 @@
                         buffer = lines.pop(); // keep incomplete line in buffer
 
                         for (const line of lines) {
-                            // Skip empty lines and SSE comments (heartbeats)
-                            if (line.startsWith(':')) { debugEvents.heartbeat++; continue; }
+                            // Skip empty lines and SSE comments
+                            if (line.startsWith(':')) continue;
                             if (!line.startsWith('data: ')) continue;
                             try {
                                 const data = JSON.parse(line.slice(6));
@@ -1156,6 +1156,9 @@
                                     debugEvents.replace++;
                                     // Server sent a cleaned version of the full response
                                     streamedText = data.content;
+                                } else if (data.type === 'heartbeat') {
+                                    debugEvents.heartbeat++;
+                                    updateDebug();
                                 } else if (data.type === 'done') {
                                     debugEvents.done++;
                                 } else if (data.type === 'error') {
