@@ -393,7 +393,7 @@ class CustomOpenAIService {
           }
         ],
         temperature: 0.7,
-        max_tokens: 128000
+        max_tokens: 4096
       });
 
       if (!response?.choices?.[0]?.message?.content) {
@@ -417,25 +417,22 @@ class CustomOpenAIService {
 
       const model = config.custom.model;
 
-      const response = await this.client.chat.completions.create({
-        model: model,
-        messages: [
-          {
-            role: "user",
-            content: 'Ping'
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 1000
-      });
-
-      if (!response?.choices?.[0]?.message?.content) {
-        return { status: 'error' };
+      // Use the models endpoint for a lightweight connectivity check
+      // instead of sending a full chat completion every poll interval
+      const models = await this.client.models.list();
+      const modelList = [];
+      for await (const m of models) {
+        modelList.push(m.id);
       }
 
-      return { status: 'ok', model: model };
+      if (modelList.includes(model)) {
+        return { status: 'ok', model: model };
+      }
+
+      console.warn(`Model ${model} not found in available models: ${modelList.join(', ')}`);
+      return { status: 'error', model: model };
     } catch (error) {
-      console.error('Error generating text with Custom OpenAI:', error);
+      console.error('Error checking Custom OpenAI status:', error.message);
       return { status: 'error' };
     }
   }

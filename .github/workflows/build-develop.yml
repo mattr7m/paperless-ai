@@ -1,8 +1,8 @@
-name: Build and push release image
+name: Build develop image
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [develop]
 
 jobs:
   build:
@@ -26,6 +26,4 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/paperless-ai:${{ github.event.release.tag_name }}
-            ghcr.io/${{ github.repository_owner }}/paperless-ai:latest
+          tags: ghcr.io/${{ github.repository_owner }}/paperless-ai:develop

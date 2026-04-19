@@ -688,6 +688,7 @@
         </div>
 
         <div id="error-message" class="hidden"></div>
+        <div id="stream-debug" class="hidden" style="font-size:0.75rem; padding:0.5rem; background:#1e293b; color:#86efac; border-radius:0.25rem; margin-top:0.25rem; font-family:monospace;"></div>
 
         <div class="typing-indicator hidden" id="typing-indicator">
             <span>Search in progress</span>
@@ -744,6 +745,7 @@
         let darkMode = localStorage.getItem('darkMode') === 'true';
         let useAI = localStorage.getItem('useAI') !== 'false'; // Default: true
         let isConnected = false; // Track connection status
+        const debugMode = new URLSearchParams(window.location.search).get('debug') === '1';
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -1058,52 +1060,68 @@
             const toDate = dateTo.value;
             const correspondentValue = correspondent.value.trim();
             
-            // Prepare request
-            const endpoint = '/api/rag/ask';
-            
-            fetch(endpoint, {
+            // Use async job endpoint — submit question, poll for result
+            const debugEl = document.getElementById('stream-debug');
+            function debugLog(msg) {
+                if (!debugMode) return;
+                debugEl.classList.remove('hidden');
+                debugEl.textContent = msg;
+            }
+            debugLog('Submitting question...');
+
+            fetch('/api/rag/ask/async', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    question: questionText,
-                    useAI: useAI,
-                    from_date: fromDate || undefined,
-                    to_date: toDate || undefined,
-                    correspondent: correspondentValue || undefined
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question: questionText })
             })
             .then(response => {
-                if (!response.ok) {
-                    throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
-                }
+                if (!response.ok) throw new Error(`Server responded with ${response.status}`);
                 return response.json();
             })
-            .then(data => {
-                // Hide typing indicator
-                typingIndicator.classList.add('hidden');
-                
-                // Display answer with sources
-                addAssistantMessage(data.answer, data.sources, data.model);
-                
-                // Update connection status
-                isConnected = true;
-                updateStatusIndicator('online', 'Online');
+            .then(({ jobId }) => {
+                debugLog(`Job ${jobId.substring(0,8)}... polling`);
+                let polls = 0;
+
+                function pollJob() {
+                    polls++;
+                    fetch(`/api/rag/ask/status/${jobId}`)
+                    .then(r => r.json())
+                    .then(job => {
+                        const elapsed = Math.round(job.elapsed / 1000);
+                        debugLog(`Job: ${job.status} | ${elapsed}s | polls=${polls}`);
+
+                        if (job.status === 'complete') {
+                            typingIndicator.classList.add('hidden');
+                            addAssistantMessage(job.answer, job.sources);
+                            isConnected = true;
+                            updateStatusIndicator('online', 'Online');
+                            debugLog(debugEl.textContent + ' | DONE');
+                        } else if (job.status === 'error') {
+                            typingIndicator.classList.add('hidden');
+                            showError(`Error: ${job.error}`);
+                            debugLog(debugEl.textContent + ' | ERROR: ' + job.error);
+                        } else {
+                            // Still processing — poll again in 3 seconds
+                            setTimeout(pollJob, 3000);
+                        }
+                    })
+                    .catch(err => {
+                        typingIndicator.classList.add('hidden');
+                        showError(`Poll error: ${err.message}`);
+                        debugLog('Poll error: ' + err.message);
+                    });
+                }
+
+                // Start polling after a short delay
+                setTimeout(pollJob, 2000);
             })
             .catch(error => {
-                // Hide typing indicator
                 typingIndicator.classList.add('hidden');
-                
-                // Show error message
                 showError(`Error: ${error.message}`);
-                
-                // Update connection status if there was an error
+                debugLog('ERROR: ' + error.message);
                 isConnected = false;
                 updateStatusIndicator('offline', 'Offline');
                 updateStatusBadgesOffline();
-                
-                // Schedule an immediate status check
                 setTimeout(checkStatus, 1000);
             });
         }
