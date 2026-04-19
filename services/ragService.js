@@ -199,8 +199,13 @@ class RagService {
 
     const prompt = `
       You are a helpful assistant that answers questions about documents.
+      These documents were digitized via OCR, so the text may be messy:
+      - Table columns may be split across lines (labels on one line, values on another)
+      - Dollar amounts may appear far from their labels
+      - Characters may be misread (e.g. ¥ instead of $, | instead of I)
+      Do your best to match amounts to their correct labels by reasoning about the document structure.
 
-      Answer the following question precisely, based on the provided documents:
+      Answer the following question based on the provided documents:
 
       Question: ${question}
 
@@ -209,8 +214,7 @@ class RagService {
 
       Important instructions:
       - Use ONLY information from the provided documents
-      - If the answer is not contained in the documents, respond: "This information is not contained in the documents." (in the same language as the question)
-      - Avoid assumptions or speculation beyond the given context
+      - If the answer truly cannot be determined from the documents, respond: "This information is not contained in the documents." (in the same language as the question)
       - Answer in the same language as the question was asked
       - Do not mention document numbers or source references, answer as if it were a natural conversation
       `;
